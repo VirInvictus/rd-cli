@@ -10,6 +10,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="rd",
         description="Raindrop.io CLI Client"
     )
+    parser.add_argument("--json", action="store_true", help="Output raw JSON")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # --- Raindrops ---
@@ -116,6 +117,9 @@ def main(argv: list[str] | None = None) -> int:
         # Raindrops
         if args.command == "list":
             items = api.get_raindrops(collection_id=args.collection, search=args.search, page=args.page, perpage=args.perpage)
+            if getattr(args, "json", False):
+                print(json.dumps(items))
+                return 0
             if not items:
                 print("No raindrops found.")
             for item in items:
@@ -127,6 +131,9 @@ def main(argv: list[str] | None = None) -> int:
 
         elif args.command == "view":
             item = api.get_raindrop(args.id)
+            if getattr(args, "json", False):
+                print(json.dumps(item))
+                return 0
             if not item:
                 print("Raindrop not found.")
                 return 1
@@ -140,40 +147,64 @@ def main(argv: list[str] | None = None) -> int:
 
         elif args.command == "add":
             item = api.add_raindrop(args.url, title=args.title, collection_id=args.collection, tags=args.tags, excerpt=args.excerpt, note=args.note, important=args.important)
+            if getattr(args, "json", False):
+                print(json.dumps(item))
+                return 0
             print(f"Added raindrop: [{item.get('_id')}] {item.get('title')} - {item.get('link')}")
 
         elif args.command == "edit":
             item = api.edit_raindrop(args.id, title=args.title, tags=args.tags, collection_id=args.collection, note=args.note)
+            if getattr(args, "json", False):
+                print(json.dumps(item))
+                return 0
             print(f"Edited raindrop: [{item.get('_id')}] {item.get('title')}")
 
         elif args.command == "rm":
             success = api.delete_raindrop(args.id)
+            if getattr(args, "json", False):
+                print(json.dumps({"success": success}))
+                return 0 if success else 1
             if success: print(f"Successfully deleted raindrop {args.id}")
             else: print(f"Failed to delete raindrop {args.id}"); return 1
 
         # Collections
         elif args.command == "c-list":
             items = api.get_collections()
+            if getattr(args, "json", False):
+                print(json.dumps(items))
+                return 0
             for item in items:
                 print(f"[{item['_id']}] {item.get('title')}")
                 
         elif args.command == "c-add":
             item = api.create_collection(args.title, parent_id=args.parent)
+            if getattr(args, "json", False):
+                print(json.dumps(item))
+                return 0
             print(f"Created collection: [{item.get('_id')}] {item.get('title')}")
             
         elif args.command == "c-rm":
             success = api.delete_collection(args.id)
+            if getattr(args, "json", False):
+                print(json.dumps({"success": success}))
+                return 0 if success else 1
             if success: print(f"Successfully deleted collection {args.id}")
             else: print(f"Failed to delete collection {args.id}"); return 1
             
         # Tags
         elif args.command == "t-list":
             items = api.get_tags()
+            if getattr(args, "json", False):
+                print(json.dumps(items))
+                return 0
             for item in items:
                 print(f"{item['_id']} ({item['count']})")
                 
         elif args.command == "t-rm":
             success = api.delete_tags(args.tags)
+            if getattr(args, "json", False):
+                print(json.dumps({"success": success}))
+                return 0 if success else 1
             if success: print(f"Successfully deleted tags: {', '.join(args.tags)}")
             else: print(f"Failed to delete tags"); return 1
             
@@ -183,6 +214,9 @@ def main(argv: list[str] | None = None) -> int:
                 items = api.get_raindrop_highlights(args.raindrop)
             else:
                 items = api.get_all_highlights()
+            if getattr(args, "json", False):
+                print(json.dumps(items))
+                return 0
             for item in items:
                 print(f"[{item['_id']}] (RD: {item.get('raindropRef', 'N/A')}) - {item.get('text')}")
                 if item.get('note'):
@@ -190,15 +224,24 @@ def main(argv: list[str] | None = None) -> int:
                     
         elif args.command == "h-add":
             items = api.add_highlight(args.raindrop, args.text, color=args.color, note=args.note)
+            if getattr(args, "json", False):
+                print(json.dumps(items))
+                return 0
             print(f"Added highlight to raindrop {args.raindrop}")
             
         elif args.command == "h-rm":
             success = api.delete_highlight(args.raindrop, args.highlight)
+            if getattr(args, "json", False):
+                print(json.dumps({"success": success}))
+                return 0 if success else 1
             if success: print(f"Successfully deleted highlight {args.highlight}")
             else: print(f"Failed to delete highlight {args.highlight}"); return 1
 
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+        if getattr(args, "json", False):
+            print(json.dumps({"error": str(e)}))
+        else:
+            print(f"Error: {e}", file=sys.stderr)
         return 1
 
     return 0
