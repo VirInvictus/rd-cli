@@ -20,6 +20,11 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser.add_argument("-s", "--search", type=str, default="", help="Search query")
     list_parser.add_argument("--page", type=int, default=0, help="Page number")
     list_parser.add_argument("--perpage", type=int, default=50, help="Items per page")
+    list_parser.add_argument("-d", "--detailed", action="store_true", help="Show descriptions and tags")
+
+    # view
+    view_parser = subparsers.add_parser("view", help="View a single raindrop in detail")
+    view_parser.add_argument("id", type=int, help="Raindrop ID")
 
     # add
     add_parser = subparsers.add_parser("add", help="Add a new raindrop")
@@ -115,6 +120,23 @@ def main(argv: list[str] | None = None) -> int:
                 print("No raindrops found.")
             for item in items:
                 print(f"[{item['_id']}] {item.get('title', 'No Title')} - {item['link']}")
+                if getattr(args, "detailed", False):
+                    if item.get('excerpt'): print(f"  Description: {item.get('excerpt')}")
+                    if item.get('note'): print(f"  Note: {item.get('note')}")
+                    if item.get('tags'): print(f"  Tags: {', '.join(item.get('tags'))}")
+
+        elif args.command == "view":
+            item = api.get_raindrop(args.id)
+            if not item:
+                print("Raindrop not found.")
+                return 1
+            print(f"[{item.get('_id')}] {item.get('title', 'No Title')}")
+            print(f"Link: {item.get('link')}")
+            if item.get('excerpt'): print(f"Description: {item.get('excerpt')}")
+            if item.get('note'): print(f"Note: {item.get('note')}")
+            if item.get('tags'): print(f"Tags: {', '.join(item.get('tags'))}")
+            collection_id = item.get('collectionId') or item.get('collection', {}).get('$id')
+            if collection_id is not None: print(f"Collection: {collection_id}")
 
         elif args.command == "add":
             item = api.add_raindrop(args.url, title=args.title, collection_id=args.collection, tags=args.tags, excerpt=args.excerpt, note=args.note, important=args.important)
