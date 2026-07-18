@@ -23,6 +23,7 @@ from pathlib import Path
 from .errors import ConfigError
 
 ENV_VARS = ("RAINDROP_TOKEN", "RAINDROP_TEST_TOKEN")
+PINBOARD_ENV_VARS = ("PINBOARD_TOKEN", "PINBOARD_API_TOKEN")
 
 
 def config_dir() -> Path:
@@ -101,20 +102,53 @@ def resolve_token() -> str:
     )
 
 
+def resolve_pinboard_token() -> str:
+    """Resolve the Pinboard API token (format ``user:HEX``), or raise.
+
+    Same precedence as :func:`resolve_token` but for the ``PINBOARD_TOKEN`` /
+    ``PINBOARD_API_TOKEN`` env vars and the ``pinboard_token`` config key.
+    """
+    load_env_files()
+    for var in PINBOARD_ENV_VARS:
+        token = os.environ.get(var)
+        if token:
+            return token.strip()
+    token = read_config().get("pinboard_token")
+    if isinstance(token, str) and token.strip():
+        return token.strip()
+    raise ConfigError(
+        "No Pinboard token found. Set PINBOARD_TOKEN, add it to "
+        f"{config_path()} via `rd config set-pinboard-token <token>`, or put it "
+        "in a .env file. Your token (format user:HEX) is at "
+        "https://pinboard.in/settings/password"
+    )
+
+
 def write_token(token: str) -> Path:
-    """Persist ``token`` to ``config.toml`` (0600), preserving other keys."""
-    token = token.strip()
-    if not token:
-        raise ConfigError("Refusing to write an empty token.")
+    """Persist the Raindrop ``token`` to ``config.toml`` (0600), keeping others."""
+    return _write_config_key("token", token)
+
+
+def write_pinboard_token(token: str) -> Path:
+    """Persist ``pinboard_token`` to ``config.toml`` (0600), keeping others."""
+    return _write_config_key("pinboard_token", token)
+
+
+def _write_config_key(key: str, value: str) -> Path:
+    """Set one string key in ``config.toml`` (0600), preserving every other key.
+    The written key is emitted first; order is cosmetic."""
+    value = value.strip()
+    if not value:
+        raise ConfigError(f"Refusing to write an empty {key}.")
     data = read_config()
-    data["token"] = token
+    data[key] = value
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [f'token = "{token}"']
-    for key, value in data.items():
-        if key == "token":
+    lines = [_toml_line(key, value)]
+    for other, val in data.items():
+        if other == key:
             continue
-        lines.append(_toml_line(key, value))
+        lines.append(_toml_line(other, val))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     path.chmod(0o600)
     return path

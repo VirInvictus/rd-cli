@@ -182,6 +182,47 @@ def format_highlight_line(hl: dict) -> str:
     return "\n".join(lines)
 
 
+# -- pinboard formatters ------------------------------------------------------
+
+
+def format_pinboard_post(post: dict, *, detailed: bool = False) -> str:
+    """One-line (or multi-line when detailed) rendering of a Pinboard bookmark.
+    Pinboard keys bookmarks by URL, so the URL is the identifier here."""
+    title = color(post.get("description") or "(no title)", "title")
+    flags = ""
+    if post.get("toread") == "yes":
+        flags += " " + color("●unread", "star")
+    if post.get("shared") == "no":
+        flags += " " + color("🔒", "muted")
+    lines = [f"{title}{flags}"]
+    link = post.get("href")
+    if link:
+        lines.append("      " + color(link, "url"))
+    extended = (post.get("extended") or "").strip()
+    if detailed and extended:
+        lines.append("      " + color(_truncate(extended, 200), "muted"))
+    tags = (post.get("tags") or "").split()
+    if tags:
+        lines.append("      " + " ".join(color(f"#{t}", "tag") for t in tags))
+    return "\n".join(lines)
+
+
+def format_pinboard_tags(tags: dict[str, int]) -> str:
+    rows = [
+        (color(f"#{tag}", "tag"), color(f"({count})", "muted"))
+        for tag, count in sorted(tags.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
+    return _columns(rows, headers=None)
+
+
+def format_note_line(note: dict) -> str:
+    nid = color(f"[{note.get('id')}]", "id")
+    title = color(note.get("title") or "(untitled)", "title")
+    length = color(f"({note.get('length', 0)} chars)", "muted")
+    updated = color(note.get("updated_at") or "", "muted")
+    return f"{nid} {title} {length} {updated}".rstrip()
+
+
 # -- generic helpers ----------------------------------------------------------
 
 

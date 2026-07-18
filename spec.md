@@ -5,7 +5,9 @@ document defines behavior that callers (humans and scripts) may rely on. The
 API-side reference (endpoints, fields, quirks) lives in `CLAUDE.md`; this file
 covers the CLI contract.
 
-Version: see `VERSION`. Status: `0.1.0`, the first framework release.
+Version: see `VERSION`. Status: `0.3.0`. Raindrop is the primary backend;
+Pinboard support (`rd pinboard`) and a two-way additive `rd sync` between the two
+services landed in 0.2.0 and 0.3.0.
 
 ## Goals
 
@@ -42,6 +44,12 @@ non-clobbering). `rd config set-token <token>` writes the config file with
 `0600` permissions. If no token is found, the CLI exits `1` with a message
 pointing at the integrations page. Commands that do not touch the network
 (`rd config *`) never require a token.
+
+The **Pinboard** commands (`rd pinboard *`) and `rd sync` additionally need a
+Pinboard token, resolved the same way by `config.resolve_pinboard_token()`:
+`PINBOARD_TOKEN` / `PINBOARD_API_TOKEN` env, then `pinboard_token` in
+`config.toml`, then `.env`. `rd config set-pinboard-token <token>` writes it.
+Both tokens coexist in one `config.toml`, and `rd config show` masks each.
 
 ## Output contract
 
@@ -103,6 +111,24 @@ and makes no API call; reads still run, so a plan can be built safely first.
 
 Back-compat aliases `c-list`, `c-add`, `c-rm`, `t-list`, `t-rm`, `h-list`,
 `h-add`, `h-rm` remain valid and behave as their grouped equivalents.
+
+**Pinboard (`rd pinboard`, alias `pb`).** A second bookmarking backend with its
+own flat model: bookmarks are addressed by **URL** (no numeric ids, no
+collections), organized by tags, with `toread`/`shared` flags and separate
+notes. Stable commands: `list`, `get <url>`, `add <url>`, `rm <url>`,
+`edit <url>`, `tag <url>`, `suggest <url>`, `tags list|rename|rm`,
+`notes list|view`. `rm` is permanent (Pinboard has no trash); `edit`/`tag` are a
+read-modify-write because Pinboard has no update endpoint. Pinboard's rate limit
+(~1 request / 3s) is paced automatically.
+
+**`rd sync`.** Two-way **additive** sync between Raindrop and Pinboard: matches
+by normalized URL (the dedup key), adds and merges but never deletes, and encodes
+the model gap reversibly in tags (collection ↔ slug tag, `toread`, `important`).
+Scope with `--direction {both,to-pinboard,to-raindrop}` and
+`--collection`/`--rd-tag`/`--pb-tag`; scope limits what is written while matching
+uses the full sets (no re-import of an out-of-scope item already on the other
+side). `--dry-run` prints the plan. Delete propagation and conflict resolution
+are out of scope for this version.
 
 ## Error and retry behavior
 

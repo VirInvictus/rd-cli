@@ -10,8 +10,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import config, output
+from . import config, output, sync
 from .client import RaindropClient
+from .pinboard import PinboardClient
 
 # -- raindrops ----------------------------------------------------------------
 
@@ -669,6 +670,266 @@ def cmd_backups_download(client: RaindropClient, args: Any) -> int:
     return 0
 
 
+# -- pinboard -----------------------------------------------------------------
+
+
+def cmd_pb_list(client: PinboardClient, args: Any) -> int:
+    tags = args.tag or None
+    if getattr(args, "all", False):
+        items = client.get_all(tags=tags)
+    else:
+        items = client.get_recent(tags=tags, count=args.count)
+    if args.toread:
+        items = [p for p in items if p.get("toread") == "yes"]
+    if args.json:
+        output.emit_json(items)
+        return 0
+    if not items:
+        output.error("no bookmarks found")
+        return 0
+    for post in items:
+        print(output.format_pinboard_post(post, detailed=args.detailed))
+    return 0
+
+
+def cmd_pb_get(client: PinboardClient, args: Any) -> int:
+    post = client.get_post(args.url)
+    if args.json:
+        output.emit_json(post or {})
+        return 0 if post else 1
+    if not post:
+        output.error(f"not saved: {args.url}")
+        return 1
+    print(output.format_pinboard_post(post, detailed=True))
+    return 0
+
+
+def cmd_pb_add(client: PinboardClient, args: Any) -> int:
+    client.add_post(
+        args.url,
+        args.title or args.url,
+        extended=args.extended or "",
+        tags=args.tags,
+        dt=args.dt or "",
+        replace=not args.no_replace,
+        shared=_tristate(args.shared, args.private),
+        toread=True if args.toread else None,
+    )
+    if args.json:
+        output.emit_json({"result": "done", "url": args.url})
+        return 0
+    output.success(f"added {args.url}")
+    return 0
+
+
+def cmd_pb_rm(client: PinboardClient, args: Any) -> int:
+    client.delete_post(args.url)
+    if args.json:
+        output.emit_json({"result": "done", "url": args.url})
+        return 0
+    output.success(f"deleted {args.url}")
+    return 0
+
+
+def cmd_pb_edit(client: PinboardClient, args: Any) -> int:
+    client.edit_post(
+        args.url,
+        title=args.title,
+        extended=args.extended,
+        tags=args.tags,
+        shared=_tristate(args.shared, args.private),
+        toread=_tristate(args.toread, args.not_toread),
+    )
+    if args.json:
+        output.emit_json({"result": "done", "url": args.url})
+        return 0
+    output.success(f"edited {args.url}")
+    return 0
+
+
+def cmd_pb_tag(client: PinboardClient, args: Any) -> int:
+    add = args.add or []
+    remove = set(args.remove or [])
+    if not (add or remove or args.clear):
+        output.error("nothing to do: pass --add, --remove, or --clear")
+        return 1
+    post = client.get_post(args.url)
+    if post is None:
+        output.error(f"not saved: {args.url}")
+        return 1
+    current = [] if args.clear else (post.get("tags") or "").split()
+    merged = [t for t in current if t not in remove]
+    for t in add:
+        if t not in merged:
+            merged.append(t)
+    client.edit_post(args.url, tags=merged)
+    if args.json:
+        output.emit_json({"result": "done", "tags": merged})
+        return 0
+    output.success(f"updated tags on {args.url}")
+    return 0
+
+
+def cmd_pb_suggest(client: PinboardClient, args: Any) -> int:
+    suggestions = client.suggest_tags(args.url)
+    if args.json:
+        output.emit_json(suggestions)
+        return 0
+    print(
+        output.color("popular:", "muted"),
+        " ".join(f"#{t}" for t in suggestions.get("popular", [])),
+    )
+    print(
+        output.color("recommended:", "muted"),
+        " ".join(f"#{t}" for t in suggestions.get("recommended", [])),
+    )
+    return 0
+
+
+def cmd_pb_tags_list(client: PinboardClient, args: Any) -> int:
+    tags = client.get_tags()
+    if args.json:
+        output.emit_json(tags)
+        return 0
+    if not tags:
+        output.error("no tags found")
+        return 0
+    print(output.format_pinboard_tags(tags))
+    return 0
+
+
+def cmd_pb_tags_rename(client: PinboardClient, args: Any) -> int:
+    client.rename_tag(args.old, args.new)
+    if args.json:
+        output.emit_json({"result": "done"})
+        return 0
+    output.success(f"renamed #{args.old} to #{args.new}")
+    return 0
+
+
+def cmd_pb_tags_rm(client: PinboardClient, args: Any) -> int:
+    for tag in args.tags:
+        client.delete_tag(tag)
+    if args.json:
+        output.emit_json({"result": "done"})
+        return 0
+    output.success(f"deleted tag(s): {', '.join('#' + t for t in args.tags)}")
+    return 0
+
+
+def cmd_pb_notes_list(client: PinboardClient, args: Any) -> int:
+    notes = client.list_notes()
+    if args.json:
+        output.emit_json(notes)
+        return 0
+    if not notes:
+        output.error("no notes found")
+        return 0
+    for note in notes:
+        print(output.format_note_line(note))
+    return 0
+
+
+def cmd_pb_notes_view(client: PinboardClient, args: Any) -> int:
+    note = client.get_note(args.id)
+    if args.json:
+        output.emit_json(note)
+        return 0
+    print(output.color(note.get("title") or "(untitled)", "title"))
+    print(note.get("text", ""))
+    return 0
+
+
+def cfg_set_pinboard_token(client: Any, args: Any) -> int:
+    path = config.write_pinboard_token(args.token)
+    output.success(f"pinboard token saved to {path}")
+    return 0
+
+
+# -- sync (raindrop <-> pinboard) ---------------------------------------------
+
+
+def cmd_sync(client: Any, args: Any) -> int:
+    """Two-way additive sync. Reads both services, builds a plan, prints it, and
+    (unless --dry-run) applies it. Needs both tokens."""
+    rd = RaindropClient(config.resolve_token())
+    pb = PinboardClient(config.resolve_pinboard_token())
+
+    raindrops = list(rd.iter_raindrops(0))
+    pb_posts = pb.get_all()
+    colls = rd.get_collections() + rd.get_child_collections()
+    title_by_id = {c["_id"]: c.get("title", "") for c in colls}
+    id_by_slug = {sync._slug(c.get("title", "")): c["_id"] for c in colls}
+
+    # Scope predicates: narrow WHAT is pushed; matching still uses the full sets.
+    collections = set(args.collection or [])
+    rd_tags = set(args.rd_tag or [])
+    pb_tags = set(args.pb_tag or [])
+
+    def rd_keep(r: dict) -> bool:
+        if collections and (r.get("collection") or {}).get("$id") not in collections:
+            return False
+        if rd_tags and not (rd_tags & set(r.get("tags") or [])):
+            return False
+        return True
+
+    def pb_keep(p: dict) -> bool:
+        if pb_tags and not (pb_tags & set((p.get("tags") or "").split())):
+            return False
+        return True
+
+    plan = sync.plan_sync(
+        raindrops, pb_posts, title_by_id, id_by_slug, rd_keep=rd_keep, pb_keep=pb_keep
+    )
+
+    # Direction limits which side actually gets written.
+    if args.direction == "to-pinboard":
+        plan.to_raindrop = []
+        for mrg in plan.merges:
+            mrg["rd_changed"] = False
+    elif args.direction == "to-raindrop":
+        plan.to_pinboard = []
+        for mrg in plan.merges:
+            mrg["pb_changed"] = False
+    plan.merges = [m for m in plan.merges if m["rd_changed"] or m["pb_changed"]]
+
+    if args.json and args.dry_run:
+        output.emit_json(
+            {
+                "to_pinboard": plan.to_pinboard,
+                "to_raindrop": plan.to_raindrop,
+                "merges": len(plan.merges),
+                "rd_dupes": plan.rd_dupes,
+                "pb_dupes": plan.pb_dupes,
+            }
+        )
+        return 0
+
+    m = output.color
+    print(f"{m('raindrop -> pinboard (new):', 'muted')} {len(plan.to_pinboard)}")
+    print(f"{m('pinboard -> raindrop (new):', 'muted')} {len(plan.to_raindrop)}")
+    print(f"{m('already on both (merge):', 'muted')} {len(plan.merges)}")
+    if plan.rd_dupes or plan.pb_dupes:
+        print(
+            f"{m('near-dupes collapsed:', 'muted')} "
+            f"raindrop {plan.rd_dupes}, pinboard {plan.pb_dupes}"
+        )
+
+    if args.dry_run:
+        output.success(f"dry run: {plan.total} change(s) planned, none applied")
+        return 0
+
+    counts = sync.apply_plan(plan, rd, pb)
+    if args.json:
+        output.emit_json(counts)
+        return 0
+    output.success(
+        f"synced: +{counts['added_pinboard']} to pinboard, "
+        f"+{counts['added_raindrop']} to raindrop, {counts['merged']} merged"
+    )
+    return 0
+
+
 # -- config -------------------------------------------------------------------
 
 
@@ -678,10 +939,11 @@ def cfg_path(client: Any, args: Any) -> int:
 
 
 def cfg_show(client: Any, args: Any) -> int:
-    data = config.read_config()
-    if "token" in data:
-        data = dict(data)
-        data["token"] = _mask(data["token"])
+    data = dict(config.read_config())
+    # Mask every secret, not just the Raindrop token (pinboard_token too).
+    for key, value in data.items():
+        if "token" in key and isinstance(value, str):
+            data[key] = _mask(value)
     if args.json:
         output.emit_json(data)
         return 0

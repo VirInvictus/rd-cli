@@ -92,8 +92,10 @@ class RaindropClient:
             headers["Content-Type"] = "application/json"
 
         if self.dry_run and method != "GET":
-            preview = json_body if json_body is not None else (form or "<multipart>")
-            print(f"DRY RUN {method} {path} {json.dumps(preview)}", file=sys.stderr)
+            print(
+                f"DRY RUN {method} {path} {_dry_run_preview(json_body, files, form)}",
+                file=sys.stderr,
+            )
             return {"result": True, "item": {}, "items": [], "modified": 0, "count": 0}
 
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
@@ -643,6 +645,26 @@ def _multipart(
     parts.append(b"")
     body = crlf.join(parts)
     return body, f"multipart/form-data; boundary={boundary}"
+
+
+def _dry_run_preview(
+    json_body: Any,
+    files: dict[str, tuple[str, bytes, str]] | None,
+    form: dict[str, str] | None,
+) -> str:
+    """Human-readable body preview for ``--dry-run``. Distinguishes a JSON body,
+    a multipart upload (whose raw bytes we never dump), and a bodyless request
+    (a plain DELETE/PUT) — the last used to be mislabeled ``<multipart>``."""
+    if json_body is not None:
+        return json.dumps(json_body)
+    if files is not None:
+        parts = ", ".join(files)
+        return (
+            f"<multipart {json.dumps(form)} files=[{parts}]>"
+            if form
+            else (f"<multipart files=[{parts}]>")
+        )
+    return "<no body>"
 
 
 def _backoff(attempt: int) -> float:

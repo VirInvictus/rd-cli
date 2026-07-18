@@ -108,6 +108,26 @@ def test_dry_run_short_circuits_writes_but_not_reads():
     assert len(opener.requests) == 1
 
 
+def test_dry_run_preview_distinguishes_body_kinds():
+    # JSON body -> the JSON; multipart -> a <multipart ...> tag; neither -> <no body>.
+    assert client_mod._dry_run_preview({"a": 1}, None, None) == '{"a": 1}'
+    assert client_mod._dry_run_preview(None, None, None) == "<no body>"
+    multipart = client_mod._dry_run_preview(
+        None, {"file": ("a.txt", b"x", "text/plain")}, {"collectionId": "5"}
+    )
+    assert multipart.startswith("<multipart ")
+    assert "files=[file]" in multipart
+
+
+def test_dry_run_bodyless_delete_not_labeled_multipart(capsys):
+    # Regression: a plain DELETE has no body and must not read as <multipart>.
+    c, _, _ = make_client([], dry_run=True)
+    c.delete_raindrop(9)
+    err = capsys.readouterr().err
+    assert "DRY RUN DELETE /raindrop/9 <no body>" in err
+    assert "multipart" not in err
+
+
 def test_retry_after_http_date_parsed():
     from email.utils import formatdate
 

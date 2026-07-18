@@ -67,6 +67,44 @@ portfolio conventions.
 - [ ] Config profiles (multiple accounts/tokens).
 - [ ] Optional interactive picker (fzf-style) behind a flag, still dependency-free.
 
+## Phase 5: a second backend, Pinboard (v0.2.0)
+
+Turned rd-cli from a Raindrop client into a two-service bookmark CLI, reusing
+the existing HTTP/output/config machinery.
+
+- [x] `PinboardClient`: stdlib `urllib`, `auth_token` query-param auth,
+      `format=json`, a minimum inter-request pacer for Pinboard's rate limit
+      (~1 call / 3s), `429`/`5xx` backoff, and the shared typed errors.
+- [x] `rd pinboard` (alias `pb`) command group honest to Pinboard's flat model
+      (URL as key, no collections): `list`, `get`, `add`, `rm`, `edit`, `tag`,
+      `suggest`, `tags list|rename|rm`, `notes list|view`.
+- [x] Read-modify-write `edit`/`tag` (Pinboard has no update endpoint).
+- [x] Pinboard token resolution + `rd config set-pinboard-token`; both service
+      tokens coexist in `config.toml`.
+- [x] `--dry-run` and `--json` across the Pinboard surface; pytest coverage
+      against the fake transport (auth params, pacing, retry, read-modify-write).
+- [x] Cross-service sync landed in Phase 6 (below).
+
+## Phase 6: cross-service sync (v0.3.0)
+
+`rd sync` between Raindrop and Pinboard, built additive-first for safety.
+
+- [x] URL normalization as the match + dedup key (fold scheme/`www`/fragment,
+      strip tracking params, keep meaningful query).
+- [x] Two-way **additive** sync (adds + merges, never deletes); the two
+      libraries converge to their union.
+- [x] Reversible model-gap encoding in tags (collection <-> slug tag, `toread`,
+      `important`); notes merged idempotently; tags unioned on a shared URL.
+- [x] Scoping: `--direction`, `--collection`, `--rd-tag`, `--pb-tag`. Scope
+      narrows what is written; matching uses the full sets (no re-import of an
+      out-of-scope item that already exists on the other side).
+- [x] `--dry-run` plan preview; pure, unit-tested planner.
+- [ ] Delete propagation + conflict resolution via a persistent manifest
+      (three-way diff). Deferred: it needs stored sync state and carries real
+      data-loss risk (Pinboard deletes are permanent).
+- [ ] A `--reconcile-dupes` pass that merges near-duplicate URLs *within* a
+      single service, not just across the two.
+
 ## Considered, not committed
 
 - A TUI (would pull a dependency or a lot of stdlib curses; low value over the

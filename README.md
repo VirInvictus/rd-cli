@@ -36,6 +36,8 @@ tags, and highlights from the terminal, with designed ANSI output for humans and
   - [Highlights](#highlights)
   - [Account: user, stats, filters, suggest, exists](#account)
   - [Import, export, backups](#import-export-backups)
+  - [Pinboard](#pinboard)
+  - [Sync (Raindrop and Pinboard)](#sync-raindrop-and-pinboard)
   - [Config](#config)
 - [Output modes](#output-modes)
 - [Exit codes](#exit-codes)
@@ -89,6 +91,13 @@ echo 'RAINDROP_TOKEN=your-token-here' > .env  # option 4: local .env
 `XDG_CONFIG_HOME` is honoured, so the config directory follows your XDG setup.
 Full OAuth2 (login flow + refresh) is planned but not yet implemented; the test
 token covers single-user needs.
+
+For the optional **Pinboard** support (see [Pinboard](#pinboard) and
+[Sync](#sync-raindrop-and-pinboard)), add a Pinboard API token, format
+`user:HEX`, from [pinboard.in/settings/password](https://pinboard.in/settings/password),
+the same three ways: the `PINBOARD_TOKEN` (or `PINBOARD_API_TOKEN`) environment
+variable, `rd config set-pinboard-token <token>`, or `PINBOARD_TOKEN=` in a
+`.env` file. Both service tokens live side by side in the one `config.toml`.
 
 ## Quick start
 
@@ -283,13 +292,81 @@ rd exists "https://example.com" "https://other.com"
 | `rd backups create` | Request a new backup (Raindrop emails the export when ready). |
 | `rd backups download <id>` | Download a backup. `-f/--format {csv,html}`, `-o/--output <path>`. |
 
+### Pinboard
+
+rd-cli also speaks [Pinboard](https://pinboard.in), the other bookmarking
+service, through a `pinboard` (alias `pb`) command group. Pinboard's model is
+**flat**: bookmarks are keyed by their URL (there are no numeric ids and no
+collections), organized only by tags, with `toread` and `shared` flags and
+separate notes. The commands match that model rather than pretending Pinboard
+has Raindrop's collections. Needs a `PINBOARD_TOKEN` (see
+[Authentication](#authentication)).
+
+| Command | Description |
+| ------- | ----------- |
+| `rd pinboard list` | List bookmarks (recent by default). Flags: `--tag <t>` (repeatable, max 3), `--count <n>` (max 100), `-a/--all` (every bookmark), `--toread` (only unread), `-d/--detailed`. |
+| `rd pinboard get <url>` | Show one bookmark by its URL. |
+| `rd pinboard add <url>` | Add a bookmark. Flags: `-t/--title`, `--extended <note>`, `--tags <t...>`, `--toread`, `--shared`/`--private`, `--no-replace` (fail if the URL exists), `--dt <iso>`. |
+| `rd pinboard rm <url>` | Delete a bookmark. **Permanent; Pinboard has no trash.** |
+| `rd pinboard edit <url>` | Edit a bookmark (read-modify-write, since Pinboard has no update endpoint). Flags: `-t/--title`, `--extended`, `--tags <t...>`, `--toread`/`--not-toread`, `--shared`/`--private`. |
+| `rd pinboard tag <url>` | Modify tags on a bookmark: `--add <t...>`, `--remove <t...>`, `--clear`. |
+| `rd pinboard suggest <url>` | Popular and recommended tags for a URL. |
+| `rd pinboard tags list` | List tags with counts. |
+| `rd pinboard tags rename <old> <new>` | Rename a tag across all bookmarks. |
+| `rd pinboard tags rm <tags...>` | Delete tag(s). |
+| `rd pinboard notes list` | List notes (metadata). |
+| `rd pinboard notes view <id>` | Show a note's full text. |
+
+```bash
+rd pinboard list --tag cooking --count 20
+rd pinboard add "https://example.com" -t "Example" --tags read-later --toread
+rd pinboard tag "https://example.com" --add reference --remove read-later
+rd pinboard tags list --json | jq 'to_entries | sort_by(-.value)[:10]'
+```
+
+Pinboard's rate limit is strict (about one request every three seconds), so the
+client paces itself automatically; bulk operations will feel slower than
+Raindrop's on purpose.
+
+### Sync (Raindrop and Pinboard)
+
+`rd sync` performs a **two-way additive** sync between the two services:
+bookmarks are matched by a normalized URL (which doubles as the dedup key), and
+the two libraries converge to their union. It only ever **adds and merges,
+never deletes**, so nothing is lost. The model gap is bridged reversibly in
+tags: a Raindrop collection becomes a slugged Pinboard tag; `toread` and
+`important` ride along as tags; a Pinboard tag that matches a collection routes
+the item back into it. On a shared URL, tags are unioned and notes merged.
+
+| Flag | Effect |
+| ---- | ------ |
+| `--dry-run` | Print the plan (counts per direction, near-dupes collapsed) and write nothing. **Run this first.** |
+| `--direction {both,to-pinboard,to-raindrop}` | Limit which side is written (default `both`). |
+| `--collection <id>` | Only push Raindrop items in this collection (repeatable). |
+| `--rd-tag <tag>` | Only push Raindrop items with this tag (repeatable). |
+| `--pb-tag <tag>` | Only push Pinboard items with this tag (repeatable). |
+
+Scope flags narrow what gets **written**, but matching always uses the full sets
+on both sides, so an out-of-scope bookmark that already exists on the other
+service is recognized and never re-imported as a duplicate.
+
+```bash
+rd sync --dry-run                                       # preview the full union
+rd sync --dry-run --direction to-pinboard --collection 123   # just one collection, one way
+rd sync --direction to-raindrop --pb-tag toread         # pull only your Pinboard to-reads
+```
+
+Delete propagation and conflict resolution (which need a persistent sync
+manifest) are intentionally not implemented yet; see `roadmap.md`.
+
 ### Config
 
 | Command | Description |
 | ------- | ----------- |
 | `rd config path` | Print the config file path. |
-| `rd config show` | Show config (the token is masked). Add `--json` for raw. |
-| `rd config set-token <token>` | Store the API token in `config.toml` (`0600`). |
+| `rd config show` | Show config (tokens are masked). Add `--json` for raw. |
+| `rd config set-token <token>` | Store the Raindrop API token in `config.toml` (`0600`). |
+| `rd config set-pinboard-token <token>` | Store the Pinboard API token (`user:HEX`) in `config.toml` (`0600`). |
 
 The `config` commands never touch the network and do not require a token.
 

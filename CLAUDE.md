@@ -17,6 +17,13 @@ filters, suggestions, import-dedup, export, backups). Every command speaks
 human-readable ANSI **and** `--json`, so it doubles as an automation and
 AI-agent surface.
 
+As of v0.2.0 it is also a **Pinboard** client: a `rd pinboard` (`pb`) command
+group manages a second bookmarking service through `PinboardClient`, a stdlib
+sibling of `RaindropClient`. Pinboard's model is flat (bookmarks keyed by URL,
+tags, notes, `toread`/`shared`), so it gets its own honest command surface
+rather than being forced through the Raindrop-shaped verbs. See the Pinboard API
+reference at the bottom of this file.
+
 House constraints that shaped it:
 
 - **Zero runtime dependencies.** Pure stdlib (`urllib`, `json`, `tomllib`,
@@ -302,8 +309,25 @@ rd tags (t)         list|rename|merge|rm
 rd highlights (h)   list|add|edit|rm
 rd user [show|set] | stats | filters | suggest | exists
 rd backups          list|create|download
-rd config           path|show|set-token
+rd pinboard (pb)    list|get|add|rm|edit|tag|suggest ; tags list|rename|rm ; notes list|view
+rd sync             two-way additive Raindrop<->Pinboard sync (--dry-run, scoping)
+rd config           path|show|set-token|set-pinboard-token
 ```
+
+The `pinboard` group is dispatched to a `PinboardClient` (not the Raindrop
+client): `cli.main()` builds one when a subparser carries `needs_pinboard`
+(set by the `_pb` helper), resolving the token via `config.resolve_pinboard_token`.
+
+`rd sync` (`commands.cmd_sync`, `needs_client=False`) builds *both* clients
+itself and drives `sync.py`. The planner (`sync.plan_sync` + the mapping helpers)
+is pure and network-free; only `sync.apply_plan` writes. It is **additive only**
+(adds + merges, never deletes), matches by `sync.normalize_url` (which is also
+the dedup key), and bridges the model gap reversibly in tags (collection <-> slug
+tag, `toread`, `important`). Scope flags (`--direction`, `--collection`,
+`--rd-tag`, `--pb-tag`) narrow what is *written* while matching stays on the full
+sets, so an out-of-scope item already present on the other side is never
+re-imported. Delete propagation / conflict resolution (needs a persistent
+manifest) is deliberately not built; see `roadmap.md` Phase 6.
 
 Global: `--json` (any position), `--no-color`, `--version`, and **`--dry-run`**
 (logs the method + payload of every write to stderr and skips the API call;
@@ -338,3 +362,68 @@ Note: values that start with `-` (the `-count`/`-title` sort keys) must use
 
 `0` success, `1` handled error (`RaindropError`, or a false `result`), `130`
 `KeyboardInterrupt`. Broken pipe exits `0` (clean `| head`).
+
+---
+
+# Pinboard API v1 reference
+
+Base URL: `https://api.pinboard.in/v1`. Wrapped by `PinboardClient` in
+`pinboard.py`. Only what rd-cli relies on is summarized here.
+
+## Auth and format
+
+- **Token in the query string**, not a header: `?auth_token=user:HEX`. The token
+  (format `username:HEX`) is at https://pinboard.in/settings/password; requesting
+  a new one invalidates the old. rd-cli also accepts HTTP Basic in principle, but
+  only the token path is wired.
+- **`format=json`** is added to every call (Pinboard defaults to XML).
+- Resolution order mirrors Raindrop: `PINBOARD_TOKEN` / `PINBOARD_API_TOKEN`
+  env, then `pinboard_token` in `config.toml`, then `.env`.
+
+## Conventions and gotchas
+
+- **Every endpoint is a GET**, including the mutating ones (`posts/add`,
+  `posts/delete`, `tags/rename`, `tags/delete`). So `--dry-run` cannot key off
+  the HTTP method: `_request` takes an explicit `write=True` for the mutators.
+- **Bookmarks are keyed by URL.** There are no numeric ids and **no collections**
+  (tags are the only organization). A `hash` field identifies content but rd-cli
+  addresses bookmarks by their `url`.
+- **No update endpoint.** An edit is a re-`add` of the same URL with
+  `replace=yes`. `PinboardClient.edit_post` does the read-modify-write so a
+  partial edit keeps the untouched fields.
+- **Strict rate limit**: about one call every 3 seconds, `posts/all` once per 5
+  minutes, `posts/recent` once per minute; `429` on breach. `PinboardClient`
+  paces itself with `min_interval` (default 3.0s, via the injectable `clock`)
+  on top of `429`/`5xx` backoff.
+- **No full-text search** in the API. Filtering is by `tag` (up to 3) and date
+  only. `rd pinboard list --tag` is the filter path.
+- Write responses carry `{"result_code": "done"}` (or `{"result": "done"}` for
+  tags); `_check` raises `APIError` on anything else (e.g. "item already exists").
+- Tags are space-joined in requests and space-separated in responses; a tag may
+  not contain a space or comma. `tags/get` returns counts as strings.
+
+## Endpoint map (and the client method that wraps it)
+
+| Method / path            | Client method     | Notes |
+| ------------------------ | ----------------- | ----- |
+| `GET /posts/update`       | `last_update`     | last change timestamp (cheap; for a future sync) |
+| `GET /posts/all`          | `get_all`         | array of posts; 5-min limit |
+| `GET /posts/recent`       | `get_recent`      | `{posts:[...]}`; `count` max 100 |
+| `GET /posts/get`          | `get_post`        | one URL; `None` if unsaved |
+| `GET /posts/add`          | `add_post` (write)| fields below |
+| `GET /posts/delete`       | `delete_post` (write) | by `url` |
+| `GET /posts/suggest`      | `suggest_tags`    | `{popular, recommended}` |
+| `GET /tags/get`           | `get_tags`        | `{tag: count}` |
+| `GET /tags/rename`        | `rename_tag` (write) | `old`, `new` |
+| `GET /tags/delete`        | `delete_tag` (write) | one `tag` per call |
+| `GET /notes/list`         | `list_notes`      | metadata only |
+| `GET /notes/{id}`         | `get_note`        | full text |
+
+Bookmark fields on `posts/add`: `url`, `description` (title, max 255), `extended`
+(note, max 65536), `tags` (space-joined, max 100), `dt` (UTC ISO 8601),
+`replace` (yes/no, default yes), `shared` (yes/no), `toread` (yes/no).
+
+## Not wrapped (deliberately)
+
+`posts/dates`, `user/secret`, `user/api_token`, and note *creation* (Pinboard has
+no note-write endpoint). A cross-service `rd sync` is on the roadmap, not built.

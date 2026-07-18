@@ -16,6 +16,7 @@ import sys
 from . import __version__, commands, config, output
 from .client import RaindropClient
 from .errors import RaindropError
+from .pinboard import PinboardClient
 
 COLORS = "blue brown cyan gray green indigo orange pink purple red teal yellow".split()
 VIEWS = ("list", "simple", "grid", "masonry")
@@ -66,17 +67,29 @@ def build_parser() -> argparse.ArgumentParser:
     _add_collection_commands(sub, common)
     _add_tag_commands(sub, common)
     _add_highlight_commands(sub, common)
+    _add_pinboard_commands(sub, common)
     _add_misc_commands(sub, common)
     _add_config_commands(sub, common)
     _add_aliases(sub, common)
     return parser
 
 
-def _p(sub, name, common, handler, *, needs_client=True, **kwargs):
+def _p(
+    sub, name, common, handler, *, needs_client=True, needs_pinboard=False, **kwargs
+):
     """Register a subparser wired to ``handler`` with the common flags."""
     parser = sub.add_parser(name, parents=[common], **kwargs)
-    parser.set_defaults(func=handler, needs_client=needs_client)
+    parser.set_defaults(
+        func=handler, needs_client=needs_client, needs_pinboard=needs_pinboard
+    )
     return parser
+
+
+def _pb(sub, name, common, handler, **kwargs):
+    """Register a Pinboard subparser (wants a ``PinboardClient``, not Raindrop)."""
+    return _p(
+        sub, name, common, handler, needs_client=False, needs_pinboard=True, **kwargs
+    )
 
 
 # -- raindrops ----------------------------------------------------------------
@@ -402,6 +415,78 @@ def _add_highlight_commands(sub, common):
     p.add_argument("highlight", help="highlight id")
 
 
+# -- pinboard -----------------------------------------------------------------
+
+
+def _add_pinboard_commands(sub, common):
+    pb = sub.add_parser(
+        "pinboard", aliases=["pb"], help="manage Pinboard bookmarks (second service)"
+    )
+    psub = pb.add_subparsers(dest="subcommand", metavar="<action>", required=True)
+
+    p = _pb(psub, "list", common, commands.cmd_pb_list, help="list bookmarks")
+    p.add_argument("--tag", action="append", help="filter by tag (repeatable, max 3)")
+    p.add_argument("--count", type=int, default=15, help="recent count (max 100)")
+    p.add_argument("-a", "--all", action="store_true", help="fetch all bookmarks")
+    p.add_argument("--toread", action="store_true", help="only unread (to-read) items")
+    p.add_argument("-d", "--detailed", action="store_true", help="show description")
+
+    p = _pb(psub, "get", common, commands.cmd_pb_get, help="show one bookmark by URL")
+    p.add_argument("url", help="bookmark URL (Pinboard's key)")
+
+    p = _pb(psub, "add", common, commands.cmd_pb_add, help="add a bookmark")
+    p.add_argument("url", help="URL to bookmark")
+    p.add_argument("-t", "--title", help="title (Pinboard 'description')")
+    p.add_argument("--extended", help="extended note (Pinboard 'extended')")
+    p.add_argument("--tags", nargs="*", help="tags")
+    p.add_argument("--toread", action="store_true", help="mark unread")
+    p.add_argument("--shared", action="store_true", help="make public")
+    p.add_argument("--private", action="store_true", help="make private")
+    p.add_argument(
+        "--no-replace", action="store_true", help="fail if the URL is already saved"
+    )
+    p.add_argument("--dt", help="UTC datetime (YYYY-MM-DDTHH:MM:SSZ)")
+
+    p = _pb(psub, "rm", common, commands.cmd_pb_rm, help="delete a bookmark by URL")
+    p.add_argument("url", help="bookmark URL")
+
+    p = _pb(psub, "edit", common, commands.cmd_pb_edit, help="edit a bookmark")
+    p.add_argument("url", help="bookmark URL")
+    p.add_argument("-t", "--title", help="new title")
+    p.add_argument("--extended", help="new extended note")
+    p.add_argument("--tags", nargs="*", help="replace tags")
+    p.add_argument("--toread", action="store_true", help="mark unread")
+    p.add_argument("--not-toread", action="store_true", help="mark read")
+    p.add_argument("--shared", action="store_true", help="make public")
+    p.add_argument("--private", action="store_true", help="make private")
+
+    p = _pb(psub, "tag", common, commands.cmd_pb_tag, help="add/remove tags on a URL")
+    p.add_argument("url", help="bookmark URL")
+    p.add_argument("--add", nargs="+", help="tags to add")
+    p.add_argument("--remove", nargs="+", help="tags to remove")
+    p.add_argument("--clear", action="store_true", help="remove all tags first")
+
+    p = _pb(
+        psub, "suggest", common, commands.cmd_pb_suggest, help="suggest tags for a URL"
+    )
+    p.add_argument("url", help="URL to get tag suggestions for")
+
+    t = psub.add_parser("tags", help="manage Pinboard tags")
+    tsub = t.add_subparsers(dest="tagaction", metavar="<action>", required=True)
+    _pb(tsub, "list", common, commands.cmd_pb_tags_list, help="list tags")
+    pr = _pb(tsub, "rename", common, commands.cmd_pb_tags_rename, help="rename a tag")
+    pr.add_argument("old", help="existing tag")
+    pr.add_argument("new", help="new name")
+    prm = _pb(tsub, "rm", common, commands.cmd_pb_tags_rm, help="delete tag(s)")
+    prm.add_argument("tags", nargs="+", help="tags to delete")
+
+    n = psub.add_parser("notes", help="read Pinboard notes")
+    nsub = n.add_subparsers(dest="noteaction", metavar="<action>", required=True)
+    _pb(nsub, "list", common, commands.cmd_pb_notes_list, help="list notes")
+    nv = _pb(nsub, "view", common, commands.cmd_pb_notes_view, help="view a note")
+    nv.add_argument("id", help="note id")
+
+
 # -- misc ---------------------------------------------------------------------
 
 
@@ -423,6 +508,37 @@ def _add_misc_commands(sub, common):
     )
 
     _p(sub, "stats", common, commands.cmd_stats, help="system collection counts")
+
+    p = _p(
+        sub,
+        "sync",
+        common,
+        commands.cmd_sync,
+        needs_client=False,
+        help="two-way additive sync between Raindrop and Pinboard (try --dry-run)",
+    )
+    p.add_argument(
+        "--direction",
+        choices=("both", "to-pinboard", "to-raindrop"),
+        default="both",
+        help="limit which side is written (default both)",
+    )
+    p.add_argument(
+        "--collection",
+        type=int,
+        action="append",
+        help="scope: only push Raindrop items in this collection id (repeatable)",
+    )
+    p.add_argument(
+        "--rd-tag",
+        action="append",
+        help="scope: only push Raindrop items with this tag (repeatable)",
+    )
+    p.add_argument(
+        "--pb-tag",
+        action="append",
+        help="scope: only push Pinboard items with this tag (repeatable)",
+    )
 
     p = _p(
         sub,
@@ -505,9 +621,19 @@ def _add_config_commands(sub, common):
         common,
         commands.cfg_set_token,
         needs_client=False,
-        help="store the API token",
+        help="store the Raindrop API token",
     )
     p.add_argument("token", help="Raindrop.io test/access token")
+
+    p = _p(
+        csub,
+        "set-pinboard-token",
+        common,
+        commands.cfg_set_pinboard_token,
+        needs_client=False,
+        help="store the Pinboard API token",
+    )
+    p.add_argument("token", help="Pinboard token (format user:HEX)")
 
 
 # -- back-compat aliases ------------------------------------------------------
@@ -566,7 +692,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         client = None
-        if getattr(args, "needs_client", False):
+        if getattr(args, "needs_pinboard", False):
+            client = PinboardClient(
+                config.resolve_pinboard_token(), dry_run=args.dry_run
+            )
+        elif getattr(args, "needs_client", False):
             client = RaindropClient(config.resolve_token(), dry_run=args.dry_run)
         return args.func(client, args)
     except RaindropError as exc:
