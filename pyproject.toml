@@ -4,14 +4,38 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rd-cli"
-version = "0.1.0"
-description = "Raindrop.io CLI Client"
+description = "A stdlib-only command-line client for Raindrop.io"
 readme = "README.md"
-requires-python = ">=3.10"
-dependencies = [
-    "requests",
-    "python-dotenv",
-]
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "Brandon LaRocque" }]
+keywords = ["raindrop", "bookmarks", "cli", "raindrop.io"]
+dynamic = ["version"]
+dependencies = []
 
 [project.scripts]
 rd = "rd_cli.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/VirInvictus/rd-cli"
+
+[tool.hatch.version]
+path = "VERSION"
+pattern = "^(?P<version>.+)$"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rd_cli"]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.ruff]
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

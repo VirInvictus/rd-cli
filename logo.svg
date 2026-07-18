@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img" aria-label="rd-cli">
+  <title>rd-cli</title>
+  <defs>
+    <linearGradient id="drop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8ea4a2"/>
+      <stop offset="1" stop-color="#658594"/>
+    </linearGradient>
+  </defs>
+  <rect width="96" height="96" rx="20" fill="#181616"/>
+  <path d="M48 14 C48 14 22 46 22 63 A26 26 0 1 0 74 63 C74 46 48 14 48 14 Z"
+        fill="url(#drop)"/>
+  <path d="M40 58 a12 12 0 0 0 6 18" fill="none" stroke="#c5c9c5"
+        stroke-width="4" stroke-linecap="round" opacity="0.5"/>
+</svg>
