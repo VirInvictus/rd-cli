@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rd-cli"
+version = "0.1.0"
+description = "Raindrop.io CLI Client"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "requests",
+    "python-dotenv",
+]
+
+[project.scripts]
+rd = "rd_cli.cli:main"
