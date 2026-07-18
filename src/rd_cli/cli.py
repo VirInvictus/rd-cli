@@ -1,6 +1,7 @@
 import argparse
 import sys
 import json
+from pathlib import Path
 from dotenv import load_dotenv
 from rd_cli import api
 
@@ -86,7 +87,16 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 def main(argv: list[str] | None = None) -> int:
-    load_dotenv()
+    env_paths = [
+        Path.cwd() / ".env",
+        Path.home() / ".config" / "rd-cli" / ".env",
+        Path.home() / ".gitrepos" / "rd-cli" / ".env"
+    ]
+    for env_path in env_paths:
+        if env_path.exists():
+            load_dotenv(env_path)
+            break
+            
     if argv is None:
         argv = sys.argv[1:]
     
